@@ -1,95 +1,100 @@
 'use client'
 
 /**
- * AlphaBet Dashboard - Main Page
- * Professional betting analysis interface with real-time updates
+ * AlphaBet Dashboard - MVP Version
+ * Real data from localStorage, manual match entry, bet tracking
  */
 
 import React, { useState, useEffect } from 'react'
 import { CapitalChart } from '@/components/charts/CapitalChart'
 import { SignalsTable, BettingSignal } from '@/components/tables/SignalsTable'
-import { SkeletonDashboard, SkeletonStats } from '@/components/ui/LoadingStates'
+import { BetHistoryTable } from '@/components/history/BetHistoryTable'
+import { AddMatchForm } from '@/components/forms/AddMatchForm'
+import { SkeletonDashboard } from '@/components/ui/LoadingStates'
 import { toast } from '@/components/ui/Toast'
-import { api, AnalysisResponse, MatchInput } from '@/lib/api'
-import { TrendingUp, DollarSign, Target, Award, RefreshCw, Settings } from 'lucide-react'
-
-// Sample data for demo
-const SAMPLE_MATCHES: MatchInput[] = [
-  {
-    match_name: "Manchester City vs Arsenal",
-    league: "Premier League",
-    home_team: {
-      name: "Manchester City",
-      goals_scored_avg: 2.5,
-      goals_conceded_avg: 0.8,
-      form: "WWWDW"
-    },
-    away_team: {
-      name: "Arsenal",
-      goals_scored_avg: 2.1,
-      goals_conceded_avg: 1.0,
-      form: "WWDWL"
-    },
-    odds_home: 1.65,
-    odds_draw: 4.20,
-    odds_away: 5.50,
-    home_xg: 2.3,
-    away_xg: 1.1
-  },
-  {
-    match_name: "Real Madrid vs Barcelona",
-    league: "La Liga",
-    home_team: {
-      name: "Real Madrid",
-      goals_scored_avg: 2.8,
-      goals_conceded_avg: 0.9,
-      form: "WWWWW"
-    },
-    away_team: {
-      name: "Barcelona",
-      goals_scored_avg: 2.6,
-      goals_conceded_avg: 1.1,
-      form: "WDWWW"
-    },
-    odds_home: 2.10,
-    odds_draw: 3.50,
-    odds_away: 3.40,
-    home_xg: 2.4,
-    away_xg: 1.8
-  },
-  // Add more matches...
-]
+import { api, AnalysisResponse, MatchInput, BettingDecisionResponse } from '@/lib/api'
+import {
+  getSettings,
+  saveSettings,
+  getBetHistory,
+  addBet,
+  updateBetResult,
+  deleteBet,
+  getCapitalHistory,
+  getStats,
+  resetBankroll,
+  BetHistory,
+} from '@/lib/storage'
+import {
+  TrendingUp,
+  DollarSign,
+  Target,
+  Award,
+  RefreshCw,
+  Settings,
+  Plus,
+  History,
+  BarChart3,
+} from 'lucide-react'
 
 export default function Dashboard() {
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null)
-  const [settings, setSettings] = useState({
-    bankroll: 10000,
-    kelly_fraction: 0.25,
-    min_edge: 0.05,
-  })
+  const [settings, setSettingsState] = useState(getSettings())
+  const [betHistory, setBetHistory] = useState<BetHistory[]>([])
+  const [capitalHistory, setCapitalHistory] = useState(getCapitalHistory())
+  const [stats, setStats] = useState(getStats())
+
+  // UI State
+  const [showAddMatch, setShowAddMatch] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [currentTab, setCurrentTab] = useState<'signals' | 'history'>('signals')
+
+  // Pending matches to analyze
+  const [pendingMatches, setPendingMatches] = useState<MatchInput[]>([])
 
   useEffect(() => {
-    loadAnalysis()
+    // Load data from localStorage
+    setBetHistory(getBetHistory())
+    setCapitalHistory(getCapitalHistory())
+    setStats(getStats())
   }, [])
 
-  const loadAnalysis = async () => {
+  const refreshData = () => {
+    setBetHistory(getBetHistory())
+    setCapitalHistory(getCapitalHistory())
+    setStats(getStats())
+    setSettingsState(getSettings())
+  }
+
+  const handleAddMatch = (match: MatchInput) => {
+    setPendingMatches([...pendingMatches, match])
+    setShowAddMatch(false)
+    toast.success('Mecz dodany!', `${match.match_name} został dodany do analizy`)
+  }
+
+  const handleAnalyzeMatches = async () => {
+    if (pendingMatches.length === 0) {
+      toast.warning('Brak meczów', 'Dodaj mecze do analizy')
+      return
+    }
+
     setLoading(true)
     try {
-      const result = await api.analyzeMatches(SAMPLE_MATCHES, settings)
+      const result = await api.analyzeMatches(pendingMatches, settings)
       setAnalysis(result)
 
       if (result.value_bets_found > 0) {
         toast.success(
           `Znaleziono ${result.value_bets_found} wartościowych zakładów!`,
-          `Całkowity stake: ${result.portfolio_summary.total_stake_amount.toFixed(2)} PLN`
+          `Łączny stake: ${result.portfolio_summary.total_stake_amount.toFixed(2)} PLN`
         )
       } else {
-        toast.info('Brak value bets', 'Spróbuj dostosować ustawienia')
+        toast.info('Brak value bets', 'Spróbuj dostosować ustawienia lub dodać inne mecze')
       }
     } catch (error) {
       toast.error(
-        'Błąd połączenia z API',
+        'Błąd analizy',
         error instanceof Error ? error.message : 'Nieznany błąd'
       )
     } finally {
@@ -98,19 +103,70 @@ export default function Dashboard() {
   }
 
   const handlePlaceBet = (signal: BettingSignal) => {
-    toast.success(
-      'Zakład dodany!',
-      `${signal.match_name}: ${signal.recommended_bet} @ ${signal.bookmaker_odds}`
+    // Add bet to history
+    addBet({
+      date: new Date().toISOString(),
+      match_name: signal.match_name,
+      bet_type: signal.recommended_bet,
+      odds: signal.bookmaker_odds,
+      stake: signal.recommended_stake_amount,
+      status: 'pending',
+      profit: 0,
+    })
+
+    // Remove from pending matches
+    setPendingMatches(
+      pendingMatches.filter((m) => m.match_name !== signal.match_name)
     )
+
+    // Clear analysis if all bets placed
+    if (analysis && analysis.recommendations.length === 1) {
+      setAnalysis(null)
+    } else if (analysis) {
+      setAnalysis({
+        ...analysis,
+        recommendations: analysis.recommendations.filter(
+          (r) => r.match_name !== signal.match_name
+        ),
+        value_bets_found: analysis.value_bets_found - 1,
+      })
+    }
+
+    refreshData()
+    toast.success('Zakład dodany!', `${signal.match_name}: ${signal.recommended_bet}`)
   }
 
-  // Sample capital history data
-  const capitalHistory = [
-    { date: '2024-12-01', capital: 10000, profit: 0 },
-    { date: '2024-12-02', capital: 10250, profit: 250 },
-    { date: '2024-12-03', capital: 10180, profit: -70 },
-    { date: '2024-12-04', capital: 10580, profit: 400 },
-  ]
+  const handleUpdateBetResult = (
+    betId: string,
+    status: 'won' | 'lost',
+    matchResult?: string
+  ) => {
+    updateBetResult(betId, status, matchResult)
+    refreshData()
+
+    const bet = betHistory.find((b) => b.id === betId)
+    if (bet) {
+      if (status === 'won') {
+        toast.success(
+          'Wygrana! 🎉',
+          `+${(bet.stake * (bet.odds - 1)).toFixed(2)} PLN`
+        )
+      } else {
+        toast.error('Przegrana', `-${bet.stake.toFixed(2)} PLN`)
+      }
+    }
+  }
+
+  const handleDeleteBet = (betId: string) => {
+    deleteBet(betId)
+    refreshData()
+    toast.info('Zakład usunięty')
+  }
+
+  const handleRemovePendingMatch = (matchName: string) => {
+    setPendingMatches(pendingMatches.filter((m) => m.match_name !== matchName))
+    toast.info('Mecz usunięty z listy')
+  }
 
   if (loading) {
     return (
@@ -130,21 +186,35 @@ export default function Dashboard() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold text-gradient-success mb-1">
-                AlphaBet
+                AlphaBet MVP
               </h1>
-              <p className="text-text-muted">Professional Betting Analysis Platform</p>
+              <p className="text-text-muted">
+                Professional Betting Analysis Platform
+              </p>
             </div>
             <div className="flex items-center gap-3">
               <button
-                onClick={loadAnalysis}
+                onClick={() => setShowAddMatch(true)}
+                className="btn btn-primary flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Dodaj Mecz
+              </button>
+              {pendingMatches.length > 0 && (
+                <button
+                  onClick={handleAnalyzeMatches}
+                  className="btn btn-primary flex items-center gap-2 animate-pulse"
+                >
+                  <BarChart3 className="w-4 h-4" />
+                  Analizuj ({pendingMatches.length})
+                </button>
+              )}
+              <button
+                onClick={refreshData}
                 className="btn btn-secondary flex items-center gap-2"
               >
                 <RefreshCw className="w-4 h-4" />
                 Odśwież
-              </button>
-              <button className="btn btn-primary flex items-center gap-2">
-                <Settings className="w-4 h-4" />
-                Ustawienia
               </button>
             </div>
           </div>
@@ -153,104 +223,164 @@ export default function Dashboard() {
 
       <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
         {/* Stats Cards */}
-        {analysis && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <StatCard
-              icon={DollarSign}
-              label="Kapitał"
-              value={`${settings.bankroll.toLocaleString('pl-PL')} PLN`}
-              trend="+5.8%"
-              trendUp
-            />
-            <StatCard
-              icon={Target}
-              label="Value Bets"
-              value={analysis.value_bets_found}
-              subtitle={`z ${analysis.total_matches_analyzed} meczów`}
-            />
-            <StatCard
-              icon={TrendingUp}
-              label="Średni Edge"
-              value={`${analysis.portfolio_summary.average_edge.toFixed(2)}%`}
-              trend="Wysoki"
-              trendUp
-            />
-            <StatCard
-              icon={Award}
-              label="Expected Value"
-              value={analysis.portfolio_summary.average_expected_value.toFixed(4)}
-              subtitle="Średni EV"
-            />
-          </div>
-        )}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <StatCard
+            icon={DollarSign}
+            label="Kapitał"
+            value={`${stats.currentBankroll.toLocaleString('pl-PL', {
+              minimumFractionDigits: 2,
+            })} PLN`}
+            trend={`${stats.currentRoi >= 0 ? '+' : ''}${stats.currentRoi.toFixed(2)}%`}
+            trendUp={stats.currentRoi >= 0}
+          />
+          <StatCard
+            icon={Target}
+            label="Zakłady"
+            value={stats.totalBets}
+            subtitle={`${stats.wonBets} wygranych / ${stats.lostBets} przegranych`}
+          />
+          <StatCard
+            icon={TrendingUp}
+            label="Win Rate"
+            value={`${stats.winRate.toFixed(1)}%`}
+            subtitle={`${stats.pendingBets} oczekujących`}
+          />
+          <StatCard
+            icon={Award}
+            label="Total Profit"
+            value={`${stats.totalProfit >= 0 ? '+' : ''}${stats.totalProfit.toFixed(
+              2
+            )} PLN`}
+            trend={`ROI: ${stats.roi.toFixed(1)}%`}
+            trendUp={stats.totalProfit >= 0}
+          />
+        </div>
 
         {/* Capital Chart */}
-        <CapitalChart data={capitalHistory} initialCapital={settings.bankroll} />
+        <CapitalChart
+          data={capitalHistory.map((h) => ({
+            date: h.date,
+            capital: h.capital,
+            profit: h.profit,
+          }))}
+          initialCapital={settings.initial_bankroll}
+        />
 
-        {/* Signals Table */}
-        {analysis && (
-          <SignalsTable
-            signals={analysis.recommendations}
-            onPlaceBet={handlePlaceBet}
-          />
-        )}
-
-        {/* Portfolio Summary */}
-        {analysis && analysis.value_bets_found > 0 && (
+        {/* Pending Matches */}
+        {pendingMatches.length > 0 && (
           <div className="card p-6">
-            <h3 className="text-xl font-semibold text-text-primary mb-4">
-              Podsumowanie Portfela
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div>
-                <p className="text-text-muted text-sm mb-1">Całkowity Stake</p>
-                <p className="font-mono text-2xl font-bold text-success">
-                  {analysis.portfolio_summary.total_stake_amount.toFixed(2)} PLN
-                </p>
-                <p className="text-text-muted text-sm mt-1">
-                  {analysis.portfolio_summary.percentage_of_bankroll.toFixed(2)}% bankrolla
-                </p>
-              </div>
-              <div>
-                <p className="text-text-muted text-sm mb-1">Średni Kurs</p>
-                <p className="font-mono text-2xl font-bold text-text-primary">
-                  {analysis.portfolio_summary.average_odds.toFixed(2)}
-                </p>
-              </div>
-              <div>
-                <p className="text-text-muted text-sm mb-1">Rozkład Pewności</p>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {Object.entries(analysis.portfolio_summary.confidence_distribution).map(
-                    ([level, count]) =>
-                      count > 0 && (
-                        <span
-                          key={level}
-                          className={`badge ${
-                            level === 'VERY HIGH' || level === 'HIGH'
-                              ? 'badge-success'
-                              : level === 'MEDIUM'
-                              ? 'badge-warning'
-                              : 'badge-neutral'
-                          }`}
-                        >
-                          {level}: {count}
-                        </span>
-                      )
-                  )}
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-semibold text-text-primary">
+                Mecze do Analizy ({pendingMatches.length})
+              </h3>
+              <button
+                onClick={handleAnalyzeMatches}
+                className="btn btn-primary btn-sm"
+              >
+                Analizuj Wszystkie
+              </button>
+            </div>
+            <div className="space-y-2">
+              {pendingMatches.map((match, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between p-3 rounded bg-background-hover"
+                >
+                  <div>
+                    <p className="text-text-primary font-medium">
+                      {match.match_name}
+                    </p>
+                    <p className="text-xs text-text-muted">
+                      Kursy: {match.odds_home} / {match.odds_draw} /{' '}
+                      {match.odds_away}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleRemovePendingMatch(match.match_name)}
+                    className="text-error hover:text-error-light"
+                  >
+                    Usuń
+                  </button>
                 </div>
-              </div>
+              ))}
             </div>
           </div>
         )}
 
+        {/* Tabs */}
+        <div className="flex gap-4 border-b border-neutral-dark">
+          <button
+            onClick={() => setCurrentTab('signals')}
+            className={`pb-3 px-4 border-b-2 transition-colors ${
+              currentTab === 'signals'
+                ? 'border-success text-success'
+                : 'border-transparent text-text-muted hover:text-text-primary'
+            }`}
+          >
+            Sygnały
+          </button>
+          <button
+            onClick={() => setCurrentTab('history')}
+            className={`pb-3 px-4 border-b-2 transition-colors flex items-center gap-2 ${
+              currentTab === 'history'
+                ? 'border-success text-success'
+                : 'border-transparent text-text-muted hover:text-text-primary'
+            }`}
+          >
+            <History className="w-4 h-4" />
+            Historia ({betHistory.length})
+          </button>
+        </div>
+
+        {/* Content */}
+        {currentTab === 'signals' ? (
+          analysis && analysis.recommendations.length > 0 ? (
+            <SignalsTable
+              signals={analysis.recommendations}
+              onPlaceBet={handlePlaceBet}
+            />
+          ) : (
+            <div className="card p-12 text-center">
+              <Target className="w-16 h-16 text-neutral-dark mx-auto mb-4" />
+              <p className="text-text-muted text-lg mb-2">
+                Brak sygnałów do wyświetlenia
+              </p>
+              <p className="text-text-muted text-sm mb-6">
+                Dodaj mecze i kliknij "Analizuj" aby znaleźć value bets
+              </p>
+              <button
+                onClick={() => setShowAddMatch(true)}
+                className="btn btn-primary mx-auto"
+              >
+                <Plus className="w-4 h-4 inline mr-2" />
+                Dodaj Pierwszy Mecz
+              </button>
+            </div>
+          )
+        ) : (
+          <BetHistoryTable
+            bets={betHistory}
+            onUpdateResult={handleUpdateBetResult}
+            onDelete={handleDeleteBet}
+          />
+        )}
+
         {/* Footer */}
         <footer className="text-center text-text-muted text-sm py-6">
-          <p>AlphaBet Platform v1.0.0 - Powered by PROPHET-70</p>
+          <p>AlphaBet Platform MVP v1.0.0</p>
           <p className="mt-1">
             Pamiętaj: Stawiaj odpowiedzialnie. Hazard może uzależniać.
           </p>
         </footer>
       </div>
+
+      {/* Modals */}
+      {showAddMatch && (
+        <AddMatchForm
+          onSubmit={handleAddMatch}
+          onCancel={() => setShowAddMatch(false)}
+        />
+      )}
     </main>
   )
 }
@@ -279,7 +409,7 @@ function StatCard({
         </div>
         {trend && (
           <span
-            className={`text-xs font-medium ${
+            className={`text-xs font-medium font-mono ${
               trendUp ? 'text-success' : 'text-error'
             }`}
           >
