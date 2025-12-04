@@ -1,0 +1,28 @@
+# Betting System - Prophet-70
+# Wymagane biblioteki
+
+# Analiza danych
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Statystyka i prawdopodobieństwo
+scipy>=1.10.0
+
+# Walidacja danych
+pydantic>=2.0.0
+
+# Wizualizacja (opcjonalnie)
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# API i web scraping (opcjonalnie)
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+
+# Jupyter notebook (do eksperymentów)
+jupyter>=1.0.0
+ipython>=8.12.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0

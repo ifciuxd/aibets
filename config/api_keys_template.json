@@ -1,0 +1,6 @@
+{
+  "api_football": "YOUR_API_KEY_HERE",
+  "odds_api": "YOUR_API_KEY_HERE",
+  "football_data": "YOUR_API_KEY_HERE",
+  "notes": "Skopiuj ten plik jako 'api_keys.json' i wypełnij prawdziwymi kluczami API"
+}
